@@ -1,0 +1,269 @@
+USE C_DATABASE;
+
+CREATE OR REPLACE SCHEMA
+
+CREATE SCHEMA BRONZE;
+CREATE SCHEMA SILVER;
+CREATE SCHEMA GOLD;
+
+
+
+CREATE OR REPLACE FILE FORMAT BRONZE.FILE_FORMAT
+TYPE='CSV',
+SKIP_HEADER=1,
+FIELD_DELIMITER =',',
+NULL_IF = ('NULL','null',''),
+EMPTY_FIELD_AS_NULL =TRUE
+error_on_column_count_mismatch=false
+DATE_FORMAT = 'YYYY-MM-DD';
+
+CREATE OR REPLACE STAGE BRONZE.CRM_FILE
+FILE_FORMAT = BRONZE.FILE_FORMAT
+
+
+LIST@BRONZE.CRM_FILE
+
+COPY INTO BRONZE.CRM_CUST_INFO
+FROM @BRONZE.CRM_FILE
+
+COPY INTO BRONZE.CRM_CUST_INFO
+FROM @BRONZE.CRM_FILE
+FILE_FORMAT = (FORMAT_NAME = 'BRONZE.FILE_FORMAT')
+ON_ERROR = 'CONTINUE';
+
+SELECT * FROM BRONZE.CRM_CUST_INFO
+
+DESC TABLE BRONZE.CRM_CUST_INFO;
+
+
+
+
+
+CREATE OR REPLACE TABLE BRONZE.CRM_CUST_INFO(
+cst_id INT,
+cst_key VARCHAR,
+cst_firstname VARCHAR,
+cst_lastname VARCHAR,
+cst_marital_status VARCHAR,
+cst_gndr VARCHAR,
+cst_create_date DATE
+)
+
+
+
+SELECT *
+FROM C_DATABASE.INFORMATION_SCHEMA.TABLES
+WHERE TABLE_SCHEMA = 'BRONZE'
+AND TABLE_NAME = 'CRM_CUST_INFO'
+
+CREATE OR REPLACE TABLE BRONZE.CRM_PRD_INFO(
+    prd_id INT,
+    prd_key VARCHAR(50),
+    prd_nm VARCHAR(100),
+    prd_cost INT,
+    prd_line VARCHAR(10),
+    prd_start_dt DATE,
+    prd_end_dt DATE
+);
+
+CREATE OR REPLACE TABLE BRONZE.CRM_SALES_INFO(
+sls_ord_num VARCHAR(50),
+sls_prd_key VARCHAR(50),
+sls_cust_id INT,
+sls_order_dt INT,
+sls_ship_dt INT,
+sls_due_dt INT,
+sls_sales INT,
+sls_quantity INT,
+sls_price INT
+)
+
+USE C_DATABASE;
+
+CREATE OR REPLACE TABLE BRONZE.ERP_CUST_AZ12(
+    cid VARCHAR(50),
+    bdate DATE,
+    gen VARCHAR(20)
+);
+
+CREATE OR REPLACE TABLE BRONZE.ERP_LOC_A101(
+    cid VARCHAR(50),
+    cntry VARCHAR(50),
+    load_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE OR REPLACE TABLE BRONZE.ERP_PX_CAT_G1V2(
+    id VARCHAR(50),
+    cat VARCHAR(50),
+    subcat VARCHAR(50),
+    maintenance VARCHAR(10)
+);
+
+SHOW TABLES IN SCHEMA C_DATABASE.BRONZE
+
+
+USE C_DATABASE;
+
+CREATE OR REPLACE STAGE BRONZE.CRM_FILE
+    FILE_FORMAT = BRONZE.FILE_FORMAT;
+
+CREATE OR REPLACE STAGE BRONZE.ERP_FILE
+    FILE_FORMAT = BRONZE.FILE_FORMAT;
+
+
+
+LIST @BRONZE.CRM_FILE;
+LIST @BRONZE.ERP_FILE;
+
+
+USE C_DATABASE;
+
+CREATE OR REPLACE PROCEDURE BRONZE.LOAD_BRONZE()
+RETURNS STRING
+LANGUAGE SQL
+AS
+$$
+DECLARE
+    batch_start TIMESTAMP;
+    batch_end TIMESTAMP;
+    step_start TIMESTAMP;
+    step_end TIMESTAMP;
+    result STRING DEFAULT '';
+BEGIN
+    batch_start := CURRENT_TIMESTAMP();
+    result := 'Bronze Load Started at ' || batch_start || '\n';
+    result := result || '================================\n';
+    
+    -- ============================================
+    -- CRM TABLES
+    -- ============================================
+    
+    -- 1. CRM_CUST_INFO
+    BEGIN
+        step_start := CURRENT_TIMESTAMP();
+        TRUNCATE TABLE BRONZE.CRM_CUST_INFO;
+        
+        COPY INTO BRONZE.CRM_CUST_INFO
+        FROM @BRONZE.CRM_FILE/cust_info.csv
+        FILE_FORMAT = (FORMAT_NAME = BRONZE.FILE_FORMAT)
+        ON_ERROR = 'CONTINUE';
+        
+        step_end := CURRENT_TIMESTAMP();
+        result := result || 'CRM_CUST_INFO: OK (' || DATEDIFF(SECOND, step_start, step_end) || 's)\n';
+    EXCEPTION
+        WHEN OTHER THEN
+            result := result || 'CRM_CUST_INFO: FAILED - ' || SQLERRM || '\n';
+    END;
+    
+    -- 2. CRM_PRD_INFO
+    BEGIN
+        step_start := CURRENT_TIMESTAMP();
+        TRUNCATE TABLE BRONZE.CRM_PRD_INFO;
+        
+        COPY INTO BRONZE.CRM_PRD_INFO
+        FROM @BRONZE.CRM_FILE/prd_info.csv
+        FILE_FORMAT = (FORMAT_NAME = BRONZE.FILE_FORMAT)
+        ON_ERROR = 'CONTINUE';
+        
+        step_end := CURRENT_TIMESTAMP();
+        result := result || 'CRM_PRD_INFO: OK (' || DATEDIFF(SECOND, step_start, step_end) || 's)\n';
+    EXCEPTION
+        WHEN OTHER THEN
+            result := result || 'CRM_PRD_INFO: FAILED - ' || SQLERRM || '\n';
+    END;
+    
+    -- 3. CRM_SALES_INFO
+    BEGIN
+        step_start := CURRENT_TIMESTAMP();
+        TRUNCATE TABLE BRONZE.CRM_SALES_INFO;
+        
+        COPY INTO BRONZE.CRM_SALES_INFO
+        FROM @BRONZE.CRM_FILE/sales_details.csv
+        FILE_FORMAT = (FORMAT_NAME = BRONZE.FILE_FORMAT)
+        ON_ERROR = 'CONTINUE';
+        
+        step_end := CURRENT_TIMESTAMP();
+        result := result || 'CRM_SALES_INFO: OK (' || DATEDIFF(SECOND, step_start, step_end) || 's)\n';
+    EXCEPTION
+        WHEN OTHER THEN
+            result := result || 'CRM_SALES_INFO: FAILED - ' || SQLERRM || '\n';
+    END;
+    
+    -- ============================================
+    -- ERP TABLES
+    -- ============================================
+    
+    -- 4. ERP_CUST_AZ12
+    BEGIN
+        step_start := CURRENT_TIMESTAMP();
+        TRUNCATE TABLE BRONZE.ERP_CUST_AZ12;
+        
+        COPY INTO BRONZE.ERP_CUST_AZ12
+        FROM @BRONZE.ERP_FILE/CUST_AZ12.csv
+        FILE_FORMAT = (FORMAT_NAME = BRONZE.FILE_FORMAT)
+        ON_ERROR = 'CONTINUE';
+        
+        step_end := CURRENT_TIMESTAMP();
+        result := result || 'ERP_CUST_AZ12: OK (' || DATEDIFF(SECOND, step_start, step_end) || 's)\n';
+    EXCEPTION
+        WHEN OTHER THEN
+            result := result || 'ERP_CUST_AZ12: FAILED - ' || SQLERRM || '\n';
+    END;
+    
+    -- 5. ERP_LOC_A101
+    BEGIN
+        step_start := CURRENT_TIMESTAMP();
+        TRUNCATE TABLE BRONZE.ERP_LOC_A101;
+        
+        COPY INTO BRONZE.ERP_LOC_A101 (cid, cntry)
+        FROM @BRONZE.ERP_FILE/LOC_A101.csv
+        FILE_FORMAT = (FORMAT_NAME = BRONZE.FILE_FORMAT)
+        ON_ERROR = 'CONTINUE';
+        
+        step_end := CURRENT_TIMESTAMP();
+        result := result || 'ERP_LOC_A101: OK (' || DATEDIFF(SECOND, step_start, step_end) || 's)\n';
+    EXCEPTION
+        WHEN OTHER THEN
+            result := result || 'ERP_LOC_A101: FAILED - ' || SQLERRM || '\n';
+    END;
+    
+    BEGIN
+        step_start := CURRENT_TIMESTAMP();
+        TRUNCATE TABLE BRONZE.ERP_PX_CAT_G1V2;
+        
+        COPY INTO BRONZE.ERP_PX_CAT_G1V2
+        FROM @BRONZE.ERP_FILE/PX_CAT_G1V2.csv
+        FILE_FORMAT = (FORMAT_NAME = BRONZE.FILE_FORMAT)
+        ON_ERROR = 'CONTINUE';
+        
+        step_end := CURRENT_TIMESTAMP();
+        result := result || 'ERP_PX_CAT_G1V2: OK (' || DATEDIFF(SECOND, step_start, step_end) || 's)\n';
+    EXCEPTION
+        WHEN OTHER THEN
+            result := result || 'ERP_PX_CAT_G1V2: FAILED - ' || SQLERRM || '\n';
+    END;
+    
+    -- Total time
+    batch_end := CURRENT_TIMESTAMP();
+    result := result || '================================\n';
+    result := result || 'TOTAL DURATION: ' || DATEDIFF(SECOND, batch_start, batch_end) || ' seconds\n';
+    result := result || 'Bronze Load Completed at ' || batch_end;
+    
+    RETURN result;
+
+EXCEPTION
+    WHEN OTHER THEN
+        RETURN 'Bronze Load Failed: ' || SQLERRM;
+END;
+$$;
+
+
+CALL BRONZE.LOAD_BRONZE();
+
+
+SELECT 'CRM_CUST_INFO' AS t, COUNT(*) AS "rows" FROM BRONZE.CRM_CUST_INFO
+UNION ALL SELECT 'CRM_PRD_INFO', COUNT(*) FROM BRONZE.CRM_PRD_INFO
+UNION ALL SELECT 'CRM_SALES_INFO', COUNT(*) FROM BRONZE.CRM_SALES_INFO
+UNION ALL SELECT 'ERP_CUST_AZ12', COUNT(*) FROM BRONZE.ERP_CUST_AZ12
+UNION ALL SELECT 'ERP_LOC_A101', COUNT(*) FROM BRONZE.ERP_LOC_A101
+UNION ALL SELECT 'ERP_PX_CAT_G1V2', COUNT(*) FROM BRONZE.ERP_PX_CAT_G1V2;
